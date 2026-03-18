@@ -1,11 +1,12 @@
 terraform {
   backend "s3" {
-    # Replace with the EXACT bucket name created in backend-setup
-    bucket         = "mues-terraform-state-2026-prod" 
-    key            = "env/dev/terraform.tfstate"
-    region         = "ap-south-1"
-    encrypt        = true
-    # Replace with the EXACT DynamoDB table name
-    dynamodb_table = "mues-terraform-lock" 
+    bucket  = "mues-terraform-state-2026" # Use your actual bucket name
+    key     = "env/dev/terraform.tfstate"
+    region  = "ap-south-1"
+    encrypt = true
+
+    # This replaces DynamoDB for state locking
+    # Requires Terraform v1.9.0+ and AWS Provider v5.58.0+
+    use_lockfile = true
   }
 }

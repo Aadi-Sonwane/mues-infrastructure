@@ -7,9 +7,6 @@ terraform {
       version = "~> 5.0"
     }
   }
-
-  # DO NOT ADD THE 'backend "s3"' BLOCK HERE.
-  # This folder will automatically use a local terraform.tfstate file.
 }
 
 provider "aws" {
@@ -23,16 +20,37 @@ provider "aws" {
   }
 }
 
-# 1. S3 Bucket for State Storage
-resource "aws_s3_bucket" "terraform_state" {
-  bucket = var.bucket_name # Change this to a globally unique name
+# 1. S3 Bucket for Access Logs (Audit Trail)
+resource "aws_s3_bucket" "state_logs" {
+  bucket = "${var.bucket_name}-logs"
+  # Don't use prevent_destroy on logs if you want to rotate them later
+}
 
-  lifecycle {
-    prevent_destroy = false # Safety first
+# Ensure the log bucket is private
+resource "aws_s3_bucket_ownership_controls" "logs_ownership" {
+  bucket = aws_s3_bucket.state_logs.id
+  rule {
+    object_ownership = "BucketOwnerPreferred"
   }
 }
 
-# 2. Enable Versioning (Crucial for recovery)
+resource "aws_s3_bucket_acl" "logs_acl" {
+  depends_on = [aws_s3_bucket_ownership_controls.logs_ownership]
+
+  bucket = aws_s3_bucket.state_logs.id
+  acl    = "log-delivery-write" # Specifically for S3 log delivery
+}
+
+# 2. The Main Terraform State Bucket
+resource "aws_s3_bucket" "terraform_state" {
+  bucket = var.bucket_name
+
+  lifecycle {
+    prevent_destroy = true 
+  }
+}
+
+# 3. Enable Versioning
 resource "aws_s3_bucket_versioning" "enabled" {
   bucket = aws_s3_bucket.terraform_state.id
   versioning_configuration {
@@ -40,7 +58,7 @@ resource "aws_s3_bucket_versioning" "enabled" {
   }
 }
 
-# 3. Server-Side Encryption
+# 4. Server-Side Encryption
 resource "aws_s3_bucket_server_side_encryption_configuration" "default" {
   bucket = aws_s3_bucket.terraform_state.id
 
@@ -51,23 +69,19 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "default" {
   }
 }
 
-# 4. Public Access Block (Security Best Practice)
+# 5. Enable Access Logging (Links the two buckets)
+resource "aws_s3_bucket_logging" "state_logging" {
+  bucket = aws_s3_bucket.terraform_state.id
+
+  target_bucket = aws_s3_bucket.state_logs.id
+  target_prefix = "log/"
+}
+
+# 6. Public Access Block
 resource "aws_s3_bucket_public_access_block" "public_check" {
   bucket                  = aws_s3_bucket.terraform_state.id
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true
   restrict_public_buckets = true
-}
-
-# 5. DynamoDB for State Locking
-resource "aws_dynamodb_table" "terraform_locks" {
-  name         = var.lock_table_name # Change this to a globally unique name
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "LockID"
-
-  attribute {
-    name = "LockID"
-    type = "S"
-  }
 }
